@@ -3,48 +3,39 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Monitoreo de CN</title>
+  <title>Parcel Monitor — ALZ Station</title>
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-left">
-    <div class="logo-mark">
-      <div class="cube"></div>
-      <div class="pulse"></div>
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="logo-mark">▣</span>
+      <span class="logo-text">ALZ STATION MONITOR</span>
     </div>
-
-    <div class="logo-container">
-      <div class="logo-scroll">
-        <span>
-          ALVIR'S ULTIMATE SUPER PRO MAX HYPER MEGA PLUS ULTRA ALL MIGHTY CN BACKLOG VISUALIZER ✦ 
-          ALVIR'S ULTIMATE SUPER PRO MAX HYPER MEGA PLUS ULTRA ALL MIGHTY CN BACKLOG VISUALIZER ✦ 
-        </span>
-      </div>
-      <div class="scanline"></div>
+    <div class="topbar-right">
+      <span id="last-updated" class="muted-label">No data loaded</span>
+      <button id="reset-btn" class="btn-reset hidden" title="Load new file">↺ New file</button>
     </div>
-  </div>
+  </header>
 
-  <div class="topbar-right">
-    <span id="last-updated" class="muted-label">Sin Datos!</span>
-    <button id="reset-btn" class="btn-reset hidden" title="Load new file">↺ Nuevo Archivo</button>
-  </div>
-</header>
-
+  <!-- DROP ZONE — shown when no data loaded -->
   <div id="drop-screen" class="drop-screen">
     <div id="drop-zone" class="drop-zone">
       <div class="drop-icon">⬇</div>
-      <p class="drop-title">DEPOSITA TU CSV AQUÍ!</p>
+      <p class="drop-title">Drop your CSV here</p>
+      <p class="drop-sub">Export from CAINIAO as CSV, then drag it onto this window</p>
       <label class="btn-browse">
         Browse file
         <input type="file" id="file-input" accept=".csv" style="display:none" />
       </label>
+      <p class="drop-hint">File stays local — nothing is uploaded anywhere</p>
     </div>
   </div>
 
+  <!-- DASHBOARD — hidden until data loaded -->
   <main class="dashboard hidden" id="dashboard">
 
     <section class="kpi-strip">
@@ -92,7 +83,10 @@
         <div class="table-controls">
           <select id="filter-status" class="ctrl-select"><option value="">Todos los estados</option></select>
           <select id="filter-city" class="ctrl-select"><option value="">Todas las ciudades</option></select>
-          <select id="filter-cp" class="ctrl-select"><option value="">Todos los CPs</option></select>
+          <div style="position:relative">
+            <button id="cp-filter-btn" class="ctrl-btn">CP: Todos ▾</button>
+            <div id="cp-dropdown" class="cp-dropdown hidden"></div>
+          </div>
           <select id="filter-courier" class="ctrl-select"><option value="">Todos los mensajeros</option></select>
           <input id="search-input" type="text" class="ctrl-input" placeholder="Buscar LP / Tracking…" />
         </div>
@@ -101,6 +95,7 @@
         <table id="parcel-table" class="parcel-table">
           <thead>
             <tr>
+              <th><input type="checkbox" id="select-all" title="Seleccionar todo"></th>
               <th data-col="overdueDays" class="sortable">Días <span class="sort-icon">↕</span></th>
               <th data-col="status">Estado</th>
               <th data-col="courier">Mensajero</th>
@@ -118,6 +113,11 @@
       </div>
       <div class="table-footer">
         <span id="row-count" class="muted-label"></span>
+        <div id="bulk-bar" class="bulk-bar hidden">
+          <span id="bulk-count" class="bulk-count"></span>
+          <button id="bulk-copy-btn" class="btn-bulk-copy">⎘ Copiar seleccionados</button>
+          <button id="bulk-clear-btn" class="btn-bulk-clear">✕ Limpiar selección</button>
+        </div>
       </div>
     </section>
 

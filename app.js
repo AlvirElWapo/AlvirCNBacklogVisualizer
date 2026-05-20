@@ -8,10 +8,12 @@ const PALETTE = [
 ];
 
 /* ─── STATE ──────────────────────────────────────────── */
-let allParcels = [];
-let cityChart  = null;
-let sortCol    = 'overdueDays';
-let sortDir    = -1;
+let allParcels    = [];
+let cityChart     = null;
+let sortCol       = 'overdueDays';
+let sortDir       = -1;
+let selectedRows  = new Set(); // tracking numbers of checked rows
+let cpFilter      = new Set(); // selected CPs (empty = all)
 
 /* ─── BOOT ───────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
@@ -20,9 +22,51 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('reset-btn').addEventListener('click', resetToDropScreen);
   document.getElementById('filter-status').addEventListener('change', renderTable);
   document.getElementById('filter-city').addEventListener('change', renderTable);
-  document.getElementById('filter-cp').addEventListener('change', renderTable);
   document.getElementById('filter-courier').addEventListener('change', renderTable);
   document.getElementById('search-input').addEventListener('input', renderTable);
+
+  // Select-all checkbox
+  document.getElementById('select-all').addEventListener('change', (e) => {
+    const checked = e.target.checked;
+    document.querySelectorAll('.row-check').forEach(cb => {
+      cb.checked = checked;
+      if (checked) selectedRows.add(cb.dataset.id);
+      else selectedRows.delete(cb.dataset.id);
+    });
+    updateBulkBar();
+  });
+
+  // Bulk copy
+  document.getElementById('bulk-copy-btn').addEventListener('click', () => {
+    const lines = allParcels
+      .filter(p => selectedRows.has(p.tracking))
+      .map(p => [p.tracking, p.city, p.cp, p.address, p.phone].filter(Boolean).join(' | '));
+    if (!lines.length) return;
+    navigator.clipboard.writeText(lines.join('\n')).then(() => {
+      const btn = document.getElementById('bulk-copy-btn');
+      btn.textContent = '✓ Copiado!';
+      btn.style.background = 'var(--ok)';
+      btn.style.color = 'var(--bg)';
+      setTimeout(() => { btn.textContent = '⎘ Copiar seleccionados'; btn.style.background = ''; btn.style.color = ''; }, 2000);
+    });
+  });
+
+  // Bulk clear
+  document.getElementById('bulk-clear-btn').addEventListener('click', () => {
+    selectedRows.clear();
+    document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+    document.getElementById('select-all').checked = false;
+    updateBulkBar();
+  });
+
+  // CP multi-filter dropdown
+  document.getElementById('cp-filter-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.getElementById('cp-dropdown').classList.toggle('hidden');
+  });
+  document.addEventListener('click', () => {
+    document.getElementById('cp-dropdown').classList.add('hidden');
+  });
 
   document.querySelectorAll('.sortable').forEach(th => {
     th.addEventListener('click', () => {
@@ -104,6 +148,8 @@ function loadDashboard(filename) {
 
 function resetToDropScreen() {
   allParcels = [];
+  selectedRows.clear();
+  cpFilter.clear();
   if (cityChart) { cityChart.destroy(); cityChart = null; }
   document.getElementById('dashboard').classList.add('hidden');
   document.getElementById('drop-screen').classList.remove('hidden');
@@ -278,8 +324,64 @@ function populateFilters() {
   const couriers = [...new Set(allParcels.map(p => p.courier).filter(Boolean))].sort();
   fillSelect('filter-status', statuses);
   fillSelect('filter-city', cities);
-  fillSelect('filter-cp', cps);
   fillSelect('filter-courier', couriers);
+  buildCpDropdown(cps);
+}
+
+function buildCpDropdown(cps) {
+  cpFilter.clear();
+  const dropdown = document.getElementById('cp-dropdown');
+  dropdown.innerHTML = '';
+
+  // "Select all" toggle
+  const allRow = document.createElement('label');
+  allRow.className = 'cp-option cp-all';
+  allRow.innerHTML = '<input type="checkbox" id="cp-all-check" checked> Todos los CPs';
+  dropdown.appendChild(allRow);
+
+  const divider = document.createElement('div');
+  divider.className = 'cp-divider';
+  dropdown.appendChild(divider);
+
+  cps.forEach(cp => {
+    const count = allParcels.filter(p => p.cp === cp).length;
+    const label = document.createElement('label');
+    label.className = 'cp-option';
+    label.innerHTML = `<input type="checkbox" class="cp-check" value="${cp}" checked> ${cp} <span class="cp-count">${count}</span>`;
+    dropdown.appendChild(label);
+  });
+
+  // Wire events
+  document.getElementById('cp-all-check').addEventListener('change', (e) => {
+    document.querySelectorAll('.cp-check').forEach(cb => { cb.checked = e.target.checked; });
+    syncCpFilter();
+  });
+
+  dropdown.querySelectorAll('.cp-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const allChecked = [...document.querySelectorAll('.cp-check')].every(c => c.checked);
+      document.getElementById('cp-all-check').checked = allChecked;
+      syncCpFilter();
+    });
+  });
+}
+
+function syncCpFilter() {
+  cpFilter.clear();
+  document.querySelectorAll('.cp-check').forEach(cb => {
+    if (!cb.checked) cpFilter.add(cb.value);
+  });
+  const btn = document.getElementById('cp-filter-btn');
+  const excluded = cpFilter.size;
+  const total = document.querySelectorAll('.cp-check').length;
+  if (excluded === 0) {
+    btn.textContent = 'CP: Todos ▾';
+    btn.classList.remove('ctrl-btn-active');
+  } else {
+    btn.textContent = `CP: ${total - excluded}/${total} ▾`;
+    btn.classList.add('ctrl-btn-active');
+  }
+  renderTable();
 }
 
 function fillSelect(id, values) {
@@ -303,7 +405,7 @@ function renderTable() {
   let rows = allParcels.filter(p => {
     if (fStatus  && p.status  !== fStatus)  return false;
     if (fCity    && p.city    !== fCity)     return false;
-    if (fCp      && p.cp      !== fCp)       return false;
+    if (cpFilter.size > 0 && cpFilter.has(p.cp)) return false;
     if (fCourier && p.courier !== fCourier)  return false;
     if (search && !`${p.lp} ${p.tracking} ${p.receiver} ${p.phone}`.toLowerCase().includes(search)) return false;
     return true;
@@ -321,8 +423,12 @@ function renderTable() {
   rows.forEach(p => {
     const tr = document.createElement('tr');
     const copyText = [p.tracking, p.city, p.cp, p.address, p.phone].filter(Boolean).join(' | ');
+    const dayClass = p.overdueDays >= 5 ? 'days-red' : p.overdueDays >= 3 ? 'days-yellow' : p.overdueDays >= 1 ? 'days-green' : 'days-zero';
+    const dayLabel = p.overdueDays > 0 ? '+' + p.overdueDays + 'd' : '0';
+    const isChecked = selectedRows.has(p.tracking) ? 'checked' : '';
     tr.innerHTML = `
-      <td class="${p.overdueDays > 0 ? 'overdue-cell' : 'days-zero'}">${p.overdueDays > 0 ? '+' + p.overdueDays + 'd' : '0'}</td>
+      <td><input type="checkbox" class="row-check" data-id="${escHtml(p.tracking)}" ${isChecked}></td>
+      <td class="${dayClass}">${dayLabel}</td>
       <td>${statusPill(p.status)}</td>
       <td>${p.isStation ? '<span class="station-tag">EN ESTACIÓN</span>' : escHtml(shortStr(p.courier, 28))}</td>
       <td>${escHtml(p.city)}</td>
@@ -339,17 +445,36 @@ function renderTable() {
   document.getElementById('row-count').textContent =
     `${rows.length} of ${allParcels.length} packages`;
 
-  // Copy button delegation
+  // Row interaction delegation
   tbody.onclick = (e) => {
     const btn = e.target.closest('.btn-copy');
-    if (!btn) return;
-    const text = btn.dataset.text;
-    navigator.clipboard.writeText(text).then(() => {
-      btn.textContent = '✓';
-      btn.style.color = 'var(--ok)';
-      setTimeout(() => { btn.innerHTML = '&#x2398;'; btn.style.color = ''; }, 1500);
-    });
+    if (btn) {
+      const text = btn.dataset.text;
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = '✓';
+        btn.style.color = 'var(--ok)';
+        setTimeout(() => { btn.innerHTML = '&#x2398;'; btn.style.color = ''; }, 1500);
+      });
+      return;
+    }
+    const cb = e.target.closest('.row-check');
+    if (cb) {
+      if (cb.checked) selectedRows.add(cb.dataset.id);
+      else selectedRows.delete(cb.dataset.id);
+      updateBulkBar();
+    }
   };
+}
+
+function updateBulkBar() {
+  const bar   = document.getElementById('bulk-bar');
+  const count = document.getElementById('bulk-count');
+  if (selectedRows.size > 0) {
+    bar.classList.remove('hidden');
+    count.textContent = `${selectedRows.size} paquete${selectedRows.size > 1 ? 's' : ''} seleccionado${selectedRows.size > 1 ? 's' : ''}`;
+  } else {
+    bar.classList.add('hidden');
+  }
 }
 
 /* ─── HELPERS ────────────────────────────────────────── */
