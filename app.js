@@ -344,6 +344,7 @@ function buildCpDropdown(cps) {
   dropdown.appendChild(divider);
 
   cps.forEach(cp => {
+    cpFilter.add(cp); // all checked by default
     const count = allParcels.filter(p => p.cp === cp).length;
     const label = document.createElement('label');
     label.className = 'cp-option';
@@ -369,16 +370,16 @@ function buildCpDropdown(cps) {
 function syncCpFilter() {
   cpFilter.clear();
   document.querySelectorAll('.cp-check').forEach(cb => {
-    if (!cb.checked) cpFilter.add(cb.value);
+    if (cb.checked) cpFilter.add(cb.value); // store CHECKED (visible) CPs
   });
   const btn = document.getElementById('cp-filter-btn');
-  const excluded = cpFilter.size;
   const total = document.querySelectorAll('.cp-check').length;
-  if (excluded === 0) {
+  const checked = cpFilter.size;
+  if (checked === total) {
     btn.textContent = 'CP: Todos ▾';
     btn.classList.remove('ctrl-btn-active');
   } else {
-    btn.textContent = `CP: ${total - excluded}/${total} ▾`;
+    btn.textContent = `CP: ${checked}/${total} ▾`;
     btn.classList.add('ctrl-btn-active');
   }
   renderTable();
@@ -398,14 +399,15 @@ function fillSelect(id, values) {
 function renderTable() {
   const fStatus  = document.getElementById('filter-status').value;
   const fCity    = document.getElementById('filter-city').value;
-  const fCp      = document.getElementById('filter-cp').value;
   const fCourier = document.getElementById('filter-courier').value;
   const search   = document.getElementById('search-input').value.toLowerCase();
 
+  // cpFilter holds the set of CPs the user has CHECKED (wants to see).
+  // Empty set means dropdown hasn't been built yet — show everything.
   let rows = allParcels.filter(p => {
     if (fStatus  && p.status  !== fStatus)  return false;
     if (fCity    && p.city    !== fCity)     return false;
-    if (cpFilter.size > 0 && cpFilter.has(p.cp)) return false;
+    if (cpFilter.size > 0 && !cpFilter.has(p.cp)) return false;
     if (fCourier && p.courier !== fCourier)  return false;
     if (search && !`${p.lp} ${p.tracking} ${p.receiver} ${p.phone}`.toLowerCase().includes(search)) return false;
     return true;
