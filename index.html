@@ -3,35 +3,46 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Parcel Monitor — ALZ Station</title>
+  <title>Monitoreo de CN</title>
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
 
-  <header class="topbar">
-    <div class="topbar-left">
-      <span class="logo-mark">▣</span>
-      <span class="logo-text">ALZ STATION MONITOR</span>
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="logo-mark">
+      <div class="cube"></div>
+      <div class="pulse"></div>
     </div>
-    <div class="topbar-right">
-      <span id="last-updated" class="muted-label">No data loaded</span>
-      <button id="reset-btn" class="btn-reset hidden" title="Load new file">↺ New file</button>
+
+    <div class="logo-container">
+      <div class="logo-scroll">
+        <span>
+          ALVIR'S ULTIMATE SUPER PRO MAX HYPER MEGA PLUS ULTRA ALL MIGHTY CN BACKLOG VISUALIZER ✦ 
+          ALVIR'S ULTIMATE SUPER PRO MAX HYPER MEGA PLUS ULTRA ALL MIGHTY CN BACKLOG VISUALIZER ✦ 
+        </span>
+      </div>
+      <div class="scanline"></div>
     </div>
-  </header>
+  </div>
+
+  <div class="topbar-right">
+    <span id="last-updated" class="muted-label">Sin Datos!</span>
+    <button id="reset-btn" class="btn-reset hidden" title="Load new file">↺ Nuevo Archivo</button>
+  </div>
+</header>
 
   <!-- DROP ZONE — shown when no data loaded -->
   <div id="drop-screen" class="drop-screen">
     <div id="drop-zone" class="drop-zone">
       <div class="drop-icon">⬇</div>
-      <p class="drop-title">Drop your CSV here</p>
-      <p class="drop-sub">Export from CAINIAO as CSV, then drag it onto this window</p>
+      <p class="drop-title">DEPOSITA TU CSV AQUÍ!</p>
       <label class="btn-browse">
         Browse file
         <input type="file" id="file-input" accept=".csv" style="display:none" />
       </label>
-      <p class="drop-hint">File stays local — nothing is uploaded anywhere</p>
     </div>
   </div>
 
