@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Monitoreo de CN</title>
   <link rel="stylesheet" href="style.css" />
-  <!-- Supabase replaces PapaParse -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
@@ -52,9 +51,10 @@
   </div>
 </div>
 
-<!-- DASHBOARD — hidden until data loaded -->
+<!-- DASHBOARD -->
 <main class="dashboard hidden" id="dashboard">
 
+  <!-- KPIs -->
   <section class="kpi-strip">
     <div class="kpi-card">
       <span class="kpi-label">Total paquetes</span>
@@ -74,11 +74,21 @@
     </div>
   </section>
 
+  <!-- Chart + Status -->
   <section class="row-2col">
     <div class="panel" id="panel-city">
       <div class="panel-header">
-        <h2 class="panel-title">Paquetes por ciudad</h2>
+        <h2 class="panel-title" id="chart-title">Paquetes por ciudad</h2>
+        <div class="chart-toggle">
+          <button class="toggle-btn active" id="toggle-city">Ciudad</button>
+          <button class="toggle-btn"        id="toggle-driver">Driver</button>
+        </div>
       </div>
+      <div id="chart-filter-badge" class="chart-filter-badge">
+        <span id="chart-filter-label"></span>
+        <span>✕ Limpiar</span>
+      </div>
+      <p class="chart-hint">Haz clic en un segmento para filtrar la tabla</p>
       <div class="chart-container pie-container">
         <canvas id="cityChart"></canvas>
       </div>
@@ -94,6 +104,7 @@
     </div>
   </section>
 
+  <!-- Table -->
   <section class="panel panel-full" id="panel-table">
     <div class="panel-header">
       <h2 class="panel-title">Detalle de paquetes</h2>
