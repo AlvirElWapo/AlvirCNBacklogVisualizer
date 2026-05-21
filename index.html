@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Monitoreo de CN</title>
   <link rel="stylesheet" href="style.css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <!-- Supabase replaces PapaParse -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
@@ -16,124 +17,131 @@
       <div class="cube"></div>
       <div class="pulse"></div>
     </div>
-
     <div class="logo-container">
       <div class="logo-scroll">
         <span>
-          ALVIR'S ULTIMATE SUPER PRO MAX HYPER MEGA PLUS ULTRA ALL MIGHTY CN BACKLOG VISUALIZER ✦ 
-          ALVIR'S ULTIMATE SUPER PRO MAX HYPER MEGA PLUS ULTRA ALL MIGHTY CN BACKLOG VISUALIZER ✦ 
+          ALVIR'S ULTIMATE SUPER PRO MAX HYPER MEGA PLUS ULTRA ALL MIGHTY CN BACKLOG VISUALIZER ✦
+          ALVIR'S ULTIMATE SUPER PRO MAX HYPER MEGA PLUS ULTRA ALL MIGHTY CN BACKLOG VISUALIZER ✦
         </span>
       </div>
       <div class="scanline"></div>
     </div>
   </div>
-
   <div class="topbar-right">
-    <span id="last-updated" class="muted-label">Sin Datos!</span>
-    <button id="reset-btn" class="btn-reset hidden" title="Load new file">↺ Nuevo Archivo</button>
+    <span id="last-updated" class="muted-label">Cargando...</span>
+    <button id="refresh-btn" class="btn-reset" title="Refresh data">↺ Actualizar</button>
   </div>
 </header>
 
-  <!-- DROP ZONE — shown when no data loaded -->
-  <div id="drop-screen" class="drop-screen">
-    <div id="drop-zone" class="drop-zone">
-      <div class="drop-icon">⬇</div>
-      <p class="drop-title">DEPOSITA TU CSV AQUÍ!</p>
-      <label class="btn-browse">
-        Browse file
-        <input type="file" id="file-input" accept=".csv" style="display:none" />
-      </label>
-    </div>
+<!-- LOADING SCREEN -->
+<div id="loading-screen" class="drop-screen">
+  <div class="drop-zone">
+    <div class="drop-icon">⟳</div>
+    <p class="drop-title">CARGANDO DATOS...</p>
+    <p class="muted-label" id="loading-msg">Conectando con base de datos</p>
   </div>
+</div>
 
-  <!-- DASHBOARD — hidden until data loaded -->
-  <main class="dashboard hidden" id="dashboard">
+<!-- ERROR SCREEN -->
+<div id="error-screen" class="drop-screen hidden">
+  <div class="drop-zone">
+    <div class="drop-icon">✕</div>
+    <p class="drop-title">ERROR AL CARGAR</p>
+    <p class="muted-label" id="error-msg"></p>
+    <button class="btn-browse" style="margin-top:1rem" onclick="loadData()">Reintentar</button>
+  </div>
+</div>
 
-    <section class="kpi-strip">
-      <div class="kpi-card">
-        <span class="kpi-label">Total paquetes</span>
-        <span class="kpi-value" id="kpi-total">—</span>
-      </div>
-      <div class="kpi-card kpi-station">
-        <span class="kpi-label">En estación</span>
-        <span class="kpi-value" id="kpi-station">—</span>
-      </div>
-      <div class="kpi-card kpi-overdue">
-        <span class="kpi-label">Con días vencidos</span>
-        <span class="kpi-value" id="kpi-overdue">—</span>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-label">Ciudades únicas</span>
-        <span class="kpi-value" id="kpi-cities">—</span>
-      </div>
-    </section>
+<!-- DASHBOARD — hidden until data loaded -->
+<main class="dashboard hidden" id="dashboard">
 
-    <section class="row-2col">
-      <div class="panel" id="panel-city">
-        <div class="panel-header">
-          <h2 class="panel-title">Paquetes por ciudad</h2>
-        </div>
-        <div class="chart-container pie-container">
-          <canvas id="cityChart"></canvas>
-        </div>
-        <div id="city-legend" class="custom-legend"></div>
-      </div>
+  <section class="kpi-strip">
+    <div class="kpi-card">
+      <span class="kpi-label">Total paquetes</span>
+      <span class="kpi-value" id="kpi-total">—</span>
+    </div>
+    <div class="kpi-card kpi-station">
+      <span class="kpi-label">En estación</span>
+      <span class="kpi-value" id="kpi-station">—</span>
+    </div>
+    <div class="kpi-card kpi-overdue">
+      <span class="kpi-label">Con días vencidos</span>
+      <span class="kpi-value" id="kpi-overdue">—</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Ciudades únicas</span>
+      <span class="kpi-value" id="kpi-cities">—</span>
+    </div>
+  </section>
 
-      <div class="panel" id="panel-status">
-        <div class="panel-header">
-          <h2 class="panel-title">Estado &amp; Prioridad</h2>
-          <span class="panel-subtitle">Ordenado por días vencidos ↓</span>
-        </div>
-        <div id="status-list" class="status-list"></div>
-      </div>
-    </section>
-
-    <section class="panel panel-full" id="panel-table">
+  <section class="row-2col">
+    <div class="panel" id="panel-city">
       <div class="panel-header">
-        <h2 class="panel-title">Detalle de paquetes</h2>
-        <div class="table-controls">
-          <select id="filter-status" class="ctrl-select"><option value="">Todos los estados</option></select>
-          <select id="filter-city" class="ctrl-select"><option value="">Todas las ciudades</option></select>
-          <div style="position:relative">
-            <button id="cp-filter-btn" class="ctrl-btn">CP: Todos ▾</button>
-            <div id="cp-dropdown" class="cp-dropdown hidden"></div>
-          </div>
-          <select id="filter-courier" class="ctrl-select"><option value="">Todos los mensajeros</option></select>
-          <input id="search-input" type="text" class="ctrl-input" placeholder="Buscar LP / Tracking…" />
-        </div>
+        <h2 class="panel-title">Paquetes por ciudad</h2>
       </div>
-      <div class="table-wrapper">
-        <table id="parcel-table" class="parcel-table">
-          <thead>
-            <tr>
-              <th><input type="checkbox" id="select-all" title="Seleccionar todo"></th>
-              <th data-col="overdueDays" class="sortable">Días <span class="sort-icon">↕</span></th>
-              <th data-col="status">Estado</th>
-              <th data-col="courier">Mensajero</th>
-              <th data-col="city">Ciudad</th>
-              <th data-col="cp">CP</th>
-              <th data-col="tracking">Tracking</th>
-              <th data-col="address">Dirección</th>
-              <th data-col="phone">Teléfono</th>
-              <th data-col="inbound">Ingreso</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="table-body"></tbody>
-        </table>
+      <div class="chart-container pie-container">
+        <canvas id="cityChart"></canvas>
       </div>
-      <div class="table-footer">
-        <span id="row-count" class="muted-label"></span>
-        <div id="bulk-bar" class="bulk-bar hidden">
-          <span id="bulk-count" class="bulk-count"></span>
-          <button id="bulk-copy-btn" class="btn-bulk-copy">⎘ Copiar seleccionados</button>
-          <button id="bulk-clear-btn" class="btn-bulk-clear">✕ Limpiar selección</button>
-        </div>
-      </div>
-    </section>
+      <div id="city-legend" class="custom-legend"></div>
+    </div>
 
-  </main>
+    <div class="panel" id="panel-status">
+      <div class="panel-header">
+        <h2 class="panel-title">Estado &amp; Prioridad</h2>
+        <span class="panel-subtitle">Ordenado por días vencidos ↓</span>
+      </div>
+      <div id="status-list" class="status-list"></div>
+    </div>
+  </section>
 
-  <script src="app.js"></script>
+  <section class="panel panel-full" id="panel-table">
+    <div class="panel-header">
+      <h2 class="panel-title">Detalle de paquetes</h2>
+      <div class="table-controls">
+        <select id="filter-status"   class="ctrl-select"><option value="">Todos los estados</option></select>
+        <select id="filter-city"     class="ctrl-select"><option value="">Todas las ciudades</option></select>
+        <div style="position:relative">
+          <button id="cp-filter-btn" class="ctrl-btn">CP: Todos ▾</button>
+          <div id="cp-dropdown" class="cp-dropdown hidden"></div>
+        </div>
+        <select id="filter-courier"  class="ctrl-select"><option value="">Todos los mensajeros</option></select>
+        <input  id="search-input"    type="text" class="ctrl-input" placeholder="Buscar LP / Tracking…" />
+      </div>
+    </div>
+
+    <div class="table-wrapper">
+      <table id="parcel-table" class="parcel-table">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="select-all" title="Seleccionar todo"></th>
+            <th data-col="dias_de_atraso" class="sortable">Días <span class="sort-icon">↕</span></th>
+            <th data-col="status">Estado</th>
+            <th data-col="courier_name">Mensajero</th>
+            <th data-col="receiver_city">Ciudad</th>
+            <th data-col="zip_code">CP</th>
+            <th data-col="tracking_no">Tracking</th>
+            <th data-col="detail_address">Dirección</th>
+            <th data-col="phone">Teléfono</th>
+            <th data-col="actual_inbound_time">Ingreso</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+
+    <div class="table-footer">
+      <span id="row-count" class="muted-label"></span>
+      <div id="bulk-bar" class="bulk-bar hidden">
+        <span id="bulk-count" class="bulk-count"></span>
+        <button id="bulk-copy-btn" class="btn-bulk-copy">⎘ Copiar seleccionados</button>
+        <button id="bulk-clear-btn" class="btn-bulk-clear">✕ Limpiar selección</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script src="app.js"></script>
 </body>
 </html>

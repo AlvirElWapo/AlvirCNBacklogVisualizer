@@ -1,508 +1,378 @@
-/* ─── CONFIG ─────────────────────────────────────────── */
-const STATION_COURIER = 'ANDRES_ALVIR_GUZMAN_DESCARGA_ALZ';
+/**
+ * app.js — CN Backlog Visualizer
+ * Data source: Supabase (replaces CSV / PapaParse)
+ *
+ * SETUP: Replace the two constants below with your Supabase project values.
+ * The anon key is safe to expose in frontend code (RLS protects your data).
+ */
 
-const PALETTE = [
-  '#f0a500','#3b82f6','#22c55e','#e05c2a','#a855f7',
-  '#ec4899','#14b8a6','#f59e0b','#6366f1','#84cc16',
-  '#ef4444','#06b6d4','#d946ef','#fb923c','#10b981',
-];
+const SUPABASE_URL  = 'https://jtusharwuoswmgdmjcvx.supabase.co';
+const SUPABASE_ANON = 'sb_publishable_n3QnMAwVC3KSkLQUAEYqwA_7kdtNtzp';
 
-/* ─── STATE ──────────────────────────────────────────── */
-let allParcels    = [];
+// ── Init ──────────────────────────────────────────────────────────────────
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// ── State ─────────────────────────────────────────────────────────────────
+let allData       = [];
+let filteredData  = [];
+let sortCol       = 'dias_de_atraso';
+let sortAsc       = false;
+let selectedRows  = new Set();
+let cpSelection   = new Set();
 let cityChart     = null;
-let sortCol       = 'overdueDays';
-let sortDir       = -1;
-let selectedRows  = new Set(); // tracking numbers of checked rows
-let cpFilter      = new Set(); // selected CPs (empty = all)
 
-/* ─── BOOT ───────────────────────────────────────────── */
-document.addEventListener('DOMContentLoaded', () => {
-  setupDropZone();
+// ── DOM refs ──────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
 
-  document.getElementById('reset-btn').addEventListener('click', resetToDropScreen);
-  document.getElementById('filter-status').addEventListener('change', renderTable);
-  document.getElementById('filter-city').addEventListener('change', renderTable);
-  document.getElementById('filter-courier').addEventListener('change', renderTable);
-  document.getElementById('search-input').addEventListener('input', renderTable);
+const loadingScreen = $('loading-screen');
+const errorScreen   = $('error-screen');
+const dashboard     = $('dashboard');
+const lastUpdated   = $('last-updated');
+const tableBody     = $('table-body');
+const rowCount      = $('row-count');
+const bulkBar       = $('bulk-bar');
+const bulkCount     = $('bulk-count');
+const selectAll     = $('select-all');
 
-  // Select-all checkbox
-  document.getElementById('select-all').addEventListener('change', (e) => {
-    const checked = e.target.checked;
-    document.querySelectorAll('.row-check').forEach(cb => {
-      cb.checked = checked;
-      if (checked) selectedRows.add(cb.dataset.id);
-      else selectedRows.delete(cb.dataset.id);
-    });
-    updateBulkBar();
-  });
+// ── Load data from Supabase ───────────────────────────────────────────────
+async function loadData() {
+  showScreen('loading');
+  $('loading-msg').textContent = 'Conectando con base de datos…';
 
-  // Bulk copy
-  document.getElementById('bulk-copy-btn').addEventListener('click', () => {
-    const lines = allParcels
-      .filter(p => selectedRows.has(p.tracking))
-      .map(p => [p.tracking, p.city, p.cp, p.address, p.phone].filter(Boolean).join(' | '));
-    if (!lines.length) return;
-    navigator.clipboard.writeText(lines.join('\n')).then(() => {
-      const btn = document.getElementById('bulk-copy-btn');
-      btn.textContent = '✓ Copiado!';
-      btn.style.background = 'var(--ok)';
-      btn.style.color = 'var(--bg)';
-      setTimeout(() => { btn.textContent = '⎘ Copiar seleccionados'; btn.style.background = ''; btn.style.color = ''; }, 2000);
-    });
-  });
+  try {
+    let allRows = [];
+    let from    = 0;
+    const PAGE  = 1000;
 
-  // Bulk clear
-  document.getElementById('bulk-clear-btn').addEventListener('click', () => {
-    selectedRows.clear();
-    document.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
-    document.getElementById('select-all').checked = false;
-    updateBulkBar();
-  });
+    // Paginate — Supabase default max is 1000 rows per call
+    while (true) {
+      const { data, error } = await db
+        .from('backlog')
+        .select('*')
+        .range(from, from + PAGE - 1)
+        .order('dias_de_atraso', { ascending: false });
 
-  // CP multi-filter dropdown
-  document.getElementById('cp-filter-btn').addEventListener('click', (e) => {
-    e.stopPropagation();
-    document.getElementById('cp-dropdown').classList.toggle('hidden');
-  });
-  document.addEventListener('click', () => {
-    document.getElementById('cp-dropdown').classList.add('hidden');
-  });
-
-  document.querySelectorAll('.sortable').forEach(th => {
-    th.addEventListener('click', () => {
-      const col = th.dataset.col;
-      sortDir = (sortCol === col) ? sortDir * -1 : -1;
-      sortCol = col;
-      document.querySelectorAll('.sort-icon').forEach(s => s.textContent = '↕');
-      th.querySelector('.sort-icon').textContent = sortDir === -1 ? '↓' : '↑';
-      renderTable();
-    });
-  });
-});
-
-/* ─── DROP ZONE SETUP ────────────────────────────────── */
-function setupDropZone() {
-  const zone  = document.getElementById('drop-zone');
-  const input = document.getElementById('file-input');
-
-  // Drag events on the whole window so you can drop anywhere
-  window.addEventListener('dragover', e => {
-    e.preventDefault();
-    zone.classList.add('drag-over');
-  });
-  window.addEventListener('dragleave', e => {
-    if (e.relatedTarget === null) zone.classList.remove('drag-over');
-  });
-  window.addEventListener('drop', e => {
-    e.preventDefault();
-    zone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
-  });
-
-  // Browse button
-  input.addEventListener('change', () => {
-    if (input.files[0]) handleFile(input.files[0]);
-  });
-}
-
-/* ─── FILE HANDLING ──────────────────────────────────── */
-function handleFile(file) {
-  if (!file.name.endsWith('.csv') && file.type !== 'text/csv') {
-    alert('Please drop a .csv file.');
-    return;
-  }
-
-  Papa.parse(file, {
-    header: true,
-    skipEmptyLines: true,
-    complete: (results) => {
-      if (!results.data || results.data.length === 0) {
-        alert('CSV appears empty or could not be parsed.');
-        return;
-      }
-      allParcels = results.data.map(normalizeRow).filter(r => r.lp);
-      if (allParcels.length === 0) {
-        alert('No parcel rows found. Make sure this is the CAINIAO parcel list CSV.');
-        return;
-      }
-      loadDashboard(file.name);
-    },
-    error: () => alert('Failed to parse CSV file.')
-  });
-}
-
-function loadDashboard(filename) {
-  document.getElementById('drop-screen').classList.add('hidden');
-  document.getElementById('dashboard').classList.remove('hidden');
-  document.getElementById('reset-btn').classList.remove('hidden');
-  document.getElementById('last-updated').textContent =
-    filename + ' — ' + new Date().toLocaleString('es-MX', { dateStyle:'short', timeStyle:'short' });
-
-  populateFilters();
-  updateKPIs();
-  renderCityChart();
-  renderStatusGroups();
-  renderTable();
-}
-
-function resetToDropScreen() {
-  allParcels = [];
-  selectedRows.clear();
-  cpFilter.clear();
-  if (cityChart) { cityChart.destroy(); cityChart = null; }
-  document.getElementById('dashboard').classList.add('hidden');
-  document.getElementById('drop-screen').classList.remove('hidden');
-  document.getElementById('reset-btn').classList.add('hidden');
-  document.getElementById('last-updated').textContent = 'No data loaded';
-  // Reset filters
-  ['filter-status','filter-city','filter-cp','filter-courier'].forEach(id => {
-    const sel = document.getElementById(id);
-    while (sel.options.length > 1) sel.remove(1);
-    sel.value = '';
-  });
-  document.getElementById('search-input').value = '';
-  document.getElementById('file-input').value = '';
-}
-
-/* ─── NORMALIZE ROW ──────────────────────────────────── */
-function normalizeRow(row) {
-  return {
-    lp:          v(row, 'LP No.'),
-    tracking:    v(row, 'Tracking No.'),
-    status:      v(row, 'Status'),
-    city:        cleanCity(v(row, 'Receiver City') || v(row, "Receiver's City")),
-    cp:          v(row, "Receiver's Zip Code") || v(row, 'Receiver Zip Code') || v(row, 'Zip Code'),
-    courier:     v(row, 'Courier Name'),
-    receiver:    v(row, 'Original consignee'),
-    address:     v(row, "Receiver's Detail Address") || v(row, 'Receiver Detail Address') || v(row, 'Detail Address'),
-    phone:       v(row, 'Original consignee telephone'),
-    inbound:     v(row, 'Actual Inbound Time'),
-    overdueDays: parseInt(v(row, 'overdueDays') || v(row, 'OverdueDays') || '0', 10) || 0,
-    isStation:   (v(row, 'Courier Name') || '').trim().toUpperCase() === STATION_COURIER.toUpperCase(),
-  };
-}
-
-function v(row, key) {
-  const found = Object.keys(row).find(k => k.trim().toLowerCase() === key.trim().toLowerCase());
-  return found ? (row[found] || '').trim() : '';
-}
-
-function cleanCity(raw) {
-  if (!raw) return 'Unknown';
-  return raw.split(',')[0].trim()
-    .toLowerCase()
-    .replace(/\b\w/g, c => c.toUpperCase());
-}
-
-/* ─── KPIs ───────────────────────────────────────────── */
-function updateKPIs() {
-  document.getElementById('kpi-total').textContent   = allParcels.length;
-  document.getElementById('kpi-station').textContent = allParcels.filter(p => p.isStation).length;
-  document.getElementById('kpi-overdue').textContent = allParcels.filter(p => p.overdueDays > 0).length;
-  document.getElementById('kpi-cities').textContent  = new Set(allParcels.map(p => p.city)).size;
-}
-
-/* ─── CITY CHART ─────────────────────────────────────── */
-function renderCityChart() {
-  const counts = {};
-  allParcels.forEach(p => { counts[p.city] = (counts[p.city] || 0) + 1; });
-  const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]);
-  const labels = sorted.map(e => e[0]);
-  const data   = sorted.map(e => e[1]);
-  const colors = labels.map((_, i) => PALETTE[i % PALETTE.length]);
-
-  if (cityChart) cityChart.destroy();
-  const ctx = document.getElementById('cityChart').getContext('2d');
-  cityChart = new Chart(ctx, {
-    type: 'doughnut',
-    data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 2, borderColor: '#18181b', hoverBorderColor: '#f0a500' }] },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: '60%',
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: ctx => ` ${ctx.label}: ${ctx.parsed} paq. (${Math.round(ctx.parsed / allParcels.length * 100)}%)`
-          },
-          backgroundColor: '#222226', borderColor: '#2e2e33', borderWidth: 1,
-          titleColor: '#e8e8ea', bodyColor: '#888890',
-        }
-      }
+      if (error) throw error;
+      allRows = allRows.concat(data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+      $('loading-msg').textContent = `Cargando… ${allRows.length} paquetes`;
     }
-  });
 
-  const legend = document.getElementById('city-legend');
-  legend.innerHTML = '';
-  labels.forEach((label, i) => {
-    const item = document.createElement('div');
-    item.className = 'legend-item';
-    item.innerHTML = `<span class="legend-dot" style="background:${colors[i]}"></span>${label} <span style="color:#555">(${data[i]})</span>`;
-    item.addEventListener('click', () => {
-      const meta = cityChart.getDatasetMeta(0);
-      meta.data[i].hidden = !meta.data[i].hidden;
-      item.style.opacity = meta.data[i].hidden ? '0.35' : '1';
-      cityChart.update();
-    });
-    legend.appendChild(item);
-  });
-}
+    allData = allRows;
+    initDashboard();
+    showScreen('dashboard');
 
-/* ─── STATUS GROUPS ──────────────────────────────────── */
-function renderStatusGroups() {
-  const groups = {};
-  allParcels.forEach(p => {
-    const s = p.status || 'Unknown';
-    if (!groups[s]) groups[s] = [];
-    groups[s].push(p);
-  });
+    const ts = allData[0]?.loaded_at
+      ? new Date(allData[0].loaded_at).toLocaleString('es-MX')
+      : 'ahora';
+    lastUpdated.textContent = `Actualizado: ${ts}`;
 
-  const sorted = Object.entries(groups).sort((a,b) => {
-    return Math.max(...b[1].map(p => p.overdueDays)) - Math.max(...a[1].map(p => p.overdueDays));
-  });
-
-  const container = document.getElementById('status-list');
-  container.innerHTML = '';
-
-  sorted.forEach(([status, parcels]) => {
-    const maxDays = Math.max(...parcels.map(p => p.overdueDays));
-    const priority = maxDays >= 5 ? 'high' : maxDays >= 2 ? 'medium' : 'low';
-    const priorityLabel = maxDays >= 5 ? '⚠ HIGH' : maxDays >= 2 ? '● MED' : '○ LOW';
-
-    const courierCounts = {};
-    parcels.forEach(p => {
-      const c = p.courier || 'Unknown';
-      courierCounts[c] = (courierCounts[c] || 0) + 1;
-    });
-    const couriersSorted = Object.entries(courierCounts).sort((a,b) => b[1]-a[1]);
-
-    const group  = document.createElement('div');
-    group.className = 'status-group';
-
-    const header = document.createElement('div');
-    header.className = 'status-group-header';
-    header.innerHTML = `
-      <div class="sg-left">
-        <span class="sg-name">${status}</span>
-        <span class="sg-count">${parcels.length}</span>
-      </div>
-      <span class="sg-priority priority-${priority}">${priorityLabel}</span>
-    `;
-
-    const rows = document.createElement('div');
-    rows.className = 'sg-rows';
-
-    couriersSorted.forEach(([courier, count]) => {
-      const isStation = courier.toUpperCase() === STATION_COURIER.toUpperCase();
-      const maxOverdue = Math.max(...parcels.filter(p => p.courier === courier).map(p => p.overdueDays));
-      const row = document.createElement('div');
-      row.className = 'sg-row';
-      row.innerHTML = `
-        <span class="sg-courier" title="${escHtml(courier)}">
-          ${isStation ? `<span class="station-tag">EN ESTACIÓN</span> ` : ''}${escHtml(courier)}
-        </span>
-        <span style="color:var(--muted);font-size:10px">${count} paq.</span>
-        ${maxOverdue > 0 ? `<span class="overdue-badge">+${maxOverdue}d</span>` : ''}
-      `;
-      rows.appendChild(row);
-    });
-
-    header.addEventListener('click', () => rows.classList.toggle('open'));
-    group.appendChild(header);
-    group.appendChild(rows);
-    container.appendChild(group);
-  });
-}
-
-/* ─── FILTERS ────────────────────────────────────────── */
-function populateFilters() {
-  const statuses = [...new Set(allParcels.map(p => p.status).filter(Boolean))].sort();
-  const cities   = [...new Set(allParcels.map(p => p.city).filter(Boolean))].sort();
-  const cps      = [...new Set(allParcels.map(p => p.cp).filter(Boolean))].sort();
-  const couriers = [...new Set(allParcels.map(p => p.courier).filter(Boolean))].sort();
-  fillSelect('filter-status', statuses);
-  fillSelect('filter-city', cities);
-  fillSelect('filter-courier', couriers);
-  buildCpDropdown(cps);
-}
-
-function buildCpDropdown(cps) {
-  cpFilter.clear();
-  const dropdown = document.getElementById('cp-dropdown');
-  dropdown.innerHTML = '';
-
-  // "Select all" toggle
-  const allRow = document.createElement('label');
-  allRow.className = 'cp-option cp-all';
-  allRow.innerHTML = '<input type="checkbox" id="cp-all-check" checked> Todos los CPs';
-  dropdown.appendChild(allRow);
-
-  const divider = document.createElement('div');
-  divider.className = 'cp-divider';
-  dropdown.appendChild(divider);
-
-  cps.forEach(cp => {
-    cpFilter.add(cp); // all checked by default
-    const count = allParcels.filter(p => p.cp === cp).length;
-    const label = document.createElement('label');
-    label.className = 'cp-option';
-    label.innerHTML = `<input type="checkbox" class="cp-check" value="${cp}" checked> ${cp} <span class="cp-count">${count}</span>`;
-    dropdown.appendChild(label);
-  });
-
-  // Wire events
-  document.getElementById('cp-all-check').addEventListener('change', (e) => {
-    document.querySelectorAll('.cp-check').forEach(cb => { cb.checked = e.target.checked; });
-    syncCpFilter();
-  });
-
-  dropdown.querySelectorAll('.cp-check').forEach(cb => {
-    cb.addEventListener('change', () => {
-      const allChecked = [...document.querySelectorAll('.cp-check')].every(c => c.checked);
-      document.getElementById('cp-all-check').checked = allChecked;
-      syncCpFilter();
-    });
-  });
-}
-
-function syncCpFilter() {
-  cpFilter.clear();
-  document.querySelectorAll('.cp-check').forEach(cb => {
-    if (cb.checked) cpFilter.add(cb.value); // store CHECKED (visible) CPs
-  });
-  const btn = document.getElementById('cp-filter-btn');
-  const total = document.querySelectorAll('.cp-check').length;
-  const checked = cpFilter.size;
-  if (checked === total) {
-    btn.textContent = 'CP: Todos ▾';
-    btn.classList.remove('ctrl-btn-active');
-  } else {
-    btn.textContent = `CP: ${checked}/${total} ▾`;
-    btn.classList.add('ctrl-btn-active');
+  } catch (err) {
+    console.error(err);
+    showScreen('error');
+    $('error-msg').textContent = err.message || 'No se pudo conectar';
   }
-  renderTable();
 }
 
-function fillSelect(id, values) {
-  const sel = document.getElementById(id);
-  while (sel.options.length > 1) sel.remove(1);
-  values.forEach(val => {
-    const opt = document.createElement('option');
-    opt.value = val; opt.textContent = val;
-    sel.appendChild(opt);
+function showScreen(name) {
+  loadingScreen.classList.toggle('hidden', name !== 'loading');
+  errorScreen  .classList.toggle('hidden', name !== 'error');
+  dashboard    .classList.toggle('hidden', name !== 'dashboard');
+}
+
+// ── Dashboard init ────────────────────────────────────────────────────────
+function initDashboard() {
+  populateFilters();
+  applyFilters();
+}
+
+// ── Filters ───────────────────────────────────────────────────────────────
+function populateFilters() {
+  const statuses  = [...new Set(allData.map(r => r.status).filter(Boolean))].sort();
+  const cities    = [...new Set(allData.map(r => r.receiver_city).filter(Boolean))].sort();
+  const couriers  = [...new Set(allData.map(r => r.courier_name).filter(Boolean))].sort();
+  const cps       = [...new Set(allData.map(r => r.zip_code).filter(Boolean))].sort();
+
+  fillSelect($('filter-status'),  statuses,  'Todos los estados');
+  fillSelect($('filter-city'),    cities,    'Todas las ciudades');
+  fillSelect($('filter-courier'), couriers,  'Todos los mensajeros');
+
+  // CP multi-select dropdown
+  const dd = $('cp-dropdown');
+  dd.innerHTML = cps.map(cp =>
+    `<label class="cp-option">
+       <input type="checkbox" value="${cp}" checked> ${cp}
+     </label>`
+  ).join('');
+  cpSelection = new Set(cps);
+  updateCpBtn();
+
+  dd.querySelectorAll('input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) cpSelection.add(cb.value);
+      else cpSelection.delete(cb.value);
+      updateCpBtn();
+      applyFilters();
+    });
   });
 }
 
-/* ─── TABLE ──────────────────────────────────────────── */
-function renderTable() {
-  const fStatus  = document.getElementById('filter-status').value;
-  const fCity    = document.getElementById('filter-city').value;
-  const fCourier = document.getElementById('filter-courier').value;
-  const search   = document.getElementById('search-input').value.toLowerCase();
+function fillSelect(sel, opts, placeholder) {
+  sel.innerHTML = `<option value="">${placeholder}</option>` +
+    opts.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
+}
 
-  // cpFilter holds the set of CPs the user has CHECKED (wants to see).
-  // Empty set means dropdown hasn't been built yet — show everything.
-  let rows = allParcels.filter(p => {
-    if (fStatus  && p.status  !== fStatus)  return false;
-    if (fCity    && p.city    !== fCity)     return false;
-    if (cpFilter.size > 0 && !cpFilter.has(p.cp)) return false;
-    if (fCourier && p.courier !== fCourier)  return false;
-    if (search && !`${p.lp} ${p.tracking} ${p.receiver} ${p.phone}`.toLowerCase().includes(search)) return false;
+function updateCpBtn() {
+  const all = $('cp-dropdown').querySelectorAll('input').length;
+  $('cp-filter-btn').textContent =
+    cpSelection.size === all ? 'CP: Todos ▾' : `CP: ${cpSelection.size} ▾`;
+}
+
+// CP dropdown toggle
+$('cp-filter-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  $('cp-dropdown').classList.toggle('hidden');
+});
+document.addEventListener('click', () => $('cp-dropdown').classList.add('hidden'));
+
+// Filter inputs
+['filter-status', 'filter-city', 'filter-courier'].forEach(id => {
+  $(id).addEventListener('change', applyFilters);
+});
+$('search-input').addEventListener('input', applyFilters);
+
+function applyFilters() {
+  const status   = $('filter-status').value;
+  const city     = $('filter-city').value;
+  const courier  = $('filter-courier').value;
+  const search   = $('search-input').value.toLowerCase().trim();
+
+  filteredData = allData.filter(r => {
+    if (status  && r.status        !== status)  return false;
+    if (city    && r.receiver_city !== city)     return false;
+    if (courier && r.courier_name  !== courier)  return false;
+    if (r.zip_code && !cpSelection.has(r.zip_code)) return false;
+    if (search && !`${r.tracking_no} ${r.detail_address}`.toLowerCase().includes(search)) return false;
     return true;
   });
 
-  rows.sort((a, b) => {
-    let av = a[sortCol], bv = b[sortCol];
-    if (sortCol === 'overdueDays') { av = +av || 0; bv = +bv || 0; }
-    else { av = (av || '').toLowerCase(); bv = (bv || '').toLowerCase(); }
-    return av < bv ? -sortDir : av > bv ? sortDir : 0;
+  sortData();
+  renderKPIs();
+  renderCityChart();
+  renderStatusList();
+  renderTable();
+}
+
+// ── Sort ──────────────────────────────────────────────────────────────────
+function sortData() {
+  filteredData.sort((a, b) => {
+    let av = a[sortCol] ?? -Infinity;
+    let bv = b[sortCol] ?? -Infinity;
+    if (typeof av === 'string') av = av.toLowerCase();
+    if (typeof bv === 'string') bv = bv.toLowerCase();
+    if (av < bv) return sortAsc ?  1 : -1;
+    if (av > bv) return sortAsc ? -1 :  1;
+    return 0;
   });
+}
 
-  const tbody = document.getElementById('table-body');
-  tbody.innerHTML = '';
-  rows.forEach(p => {
-    const tr = document.createElement('tr');
-    const copyText = [p.tracking, p.city, p.cp, p.address, p.phone].filter(Boolean).join(' | ');
-    const dayClass = p.overdueDays >= 5 ? 'days-red' : p.overdueDays >= 3 ? 'days-yellow' : p.overdueDays >= 1 ? 'days-green' : 'days-zero';
-    const dayLabel = p.overdueDays > 0 ? '+' + p.overdueDays + 'd' : '0';
-    const isChecked = selectedRows.has(p.tracking) ? 'checked' : '';
-    tr.innerHTML = `
-      <td><input type="checkbox" class="row-check" data-id="${escHtml(p.tracking)}" ${isChecked}></td>
-      <td class="${dayClass}">${dayLabel}</td>
-      <td>${statusPill(p.status)}</td>
-      <td>${p.isStation ? '<span class="station-tag">EN ESTACIÓN</span>' : escHtml(shortStr(p.courier, 28))}</td>
-      <td>${escHtml(p.city)}</td>
-      <td>${escHtml(p.cp)}</td>
-      <td style="font-size:10px;color:var(--muted)">${escHtml(p.tracking)}</td>
-      <td class="cell-address" title="${escHtml(p.address)}">${escHtml(shortStr(p.address, 48))}</td>
-      <td>${escHtml(p.phone)}</td>
-      <td style="color:var(--muted)">${formatDate(p.inbound)}</td>
-      <td><button class="btn-copy" data-text="${escHtml(copyText)}" title="Copiar para mensajero">&#x2398;</button></td>
-    `;
-    tbody.appendChild(tr);
+document.querySelectorAll('th.sortable').forEach(th => {
+  th.style.cursor = 'pointer';
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (sortCol === col) sortAsc = !sortAsc;
+    else { sortCol = col; sortAsc = false; }
+    document.querySelectorAll('.sort-icon').forEach(el => el.textContent = '↕');
+    th.querySelector('.sort-icon').textContent = sortAsc ? '↑' : '↓';
+    sortData();
+    renderTable();
   });
+});
 
-  document.getElementById('row-count').textContent =
-    `${rows.length} of ${allParcels.length} packages`;
+// ── KPIs ──────────────────────────────────────────────────────────────────
+function renderKPIs() {
+  const d = filteredData;
+  $('kpi-total')    .textContent = d.length;
+  $('kpi-station')  .textContent = d.filter(r => r.actual_inbound_time).length;
+  $('kpi-overdue')  .textContent = d.filter(r => r.dias_de_atraso > 0).length;
+  $('kpi-cities')   .textContent = new Set(d.map(r => r.receiver_city).filter(Boolean)).size;
+}
 
-  // Row interaction delegation
-  tbody.onclick = (e) => {
-    const btn = e.target.closest('.btn-copy');
-    if (btn) {
-      const text = btn.dataset.text;
-      navigator.clipboard.writeText(text).then(() => {
-        btn.textContent = '✓';
-        btn.style.color = 'var(--ok)';
-        setTimeout(() => { btn.innerHTML = '&#x2398;'; btn.style.color = ''; }, 1500);
-      });
-      return;
+// ── City chart ────────────────────────────────────────────────────────────
+const PALETTE = [
+  '#6C63FF','#FF6584','#43BDFF','#FFD166','#06D6A0',
+  '#EF476F','#118AB2','#FFB347','#A8DADC','#E63946',
+  '#457B9D','#F4A261','#2A9D8F','#E9C46A','#264653',
+];
+
+function renderCityChart() {
+  const counts = {};
+  filteredData.forEach(r => {
+    const c = r.receiver_city || 'Sin ciudad';
+    counts[c] = (counts[c] || 0) + 1;
+  });
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const labels = sorted.map(e => e[0]);
+  const values = sorted.map(e => e[1]);
+  const colors = labels.map((_, i) => PALETTE[i % PALETTE.length]);
+
+  if (cityChart) cityChart.destroy();
+  cityChart = new Chart($('cityChart'), {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data: values, backgroundColor: colors, borderWidth: 1 }] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed}` } }
+      }
     }
-    const cb = e.target.closest('.row-check');
-    if (cb) {
-      if (cb.checked) selectedRows.add(cb.dataset.id);
-      else selectedRows.delete(cb.dataset.id);
+  });
+
+  // Custom legend
+  $('city-legend').innerHTML = labels.map((l, i) =>
+    `<div class="legend-item">
+       <span class="legend-dot" style="background:${colors[i]}"></span>
+       <span class="legend-label">${esc(l)}</span>
+       <span class="legend-val">${values[i]}</span>
+     </div>`
+  ).join('');
+}
+
+// ── Status list ───────────────────────────────────────────────────────────
+function renderStatusList() {
+  const groups = {};
+  filteredData.forEach(r => {
+    const s = r.status || 'Sin estado';
+    if (!groups[s]) groups[s] = { count: 0, maxDays: 0 };
+    groups[s].count++;
+    groups[s].maxDays = Math.max(groups[s].maxDays, r.dias_de_atraso || 0);
+  });
+
+  const sorted = Object.entries(groups).sort((a, b) => b[1].maxDays - a[1].maxDays);
+  const max    = Math.max(...sorted.map(e => e[1].count), 1);
+
+  $('status-list').innerHTML = sorted.map(([status, { count, maxDays }]) => {
+    const pct   = Math.round((count / max) * 100);
+    const label = maxDays > 0 ? `${maxDays}d` : '';
+    const cls   = maxDays > 3 ? 'bar-red' : maxDays > 1 ? 'bar-yellow' : 'bar-green';
+    return `
+      <div class="status-row">
+        <div class="status-name">${esc(status)}</div>
+        <div class="status-bar-wrap">
+          <div class="status-bar ${cls}" style="width:${pct}%"></div>
+        </div>
+        <div class="status-meta">
+          <span class="status-count">${count}</span>
+          ${label ? `<span class="status-days">${label}</span>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────
+function renderTable() {
+  selectedRows.clear();
+  updateBulkBar();
+  selectAll.checked = false;
+
+  rowCount.textContent = `${filteredData.length} paquetes`;
+
+  tableBody.innerHTML = filteredData.map((r, i) => {
+    const days    = r.dias_de_atraso ?? '—';
+    const daysCls = r.dias_de_atraso > 3 ? 'days-red' : r.dias_de_atraso > 1 ? 'days-yellow' : '';
+    const inbound = r.actual_inbound_time
+      ? new Date(r.actual_inbound_time).toLocaleDateString('es-MX')
+      : '—';
+
+    return `
+      <tr data-idx="${i}">
+        <td><input type="checkbox" class="row-check" data-idx="${i}"></td>
+        <td class="days-cell ${daysCls}">${days}</td>
+        <td>${esc(r.status)}</td>
+        <td>${esc(r.courier_name)}</td>
+        <td>${esc(r.receiver_city)}</td>
+        <td>${esc(r.zip_code)}</td>
+        <td class="tracking-cell">${esc(r.tracking_no)}</td>
+        <td class="addr-cell" title="${esc(r.detail_address)}">${esc(r.detail_address)}</td>
+        <td>${esc(r.phone)}</td>
+        <td>${inbound}</td>
+        <td>
+          <button class="btn-copy-row" data-idx="${i}" title="Copiar tracking">⎘</button>
+        </td>
+      </tr>`;
+  }).join('');
+
+  // Row checkbox events
+  tableBody.querySelectorAll('.row-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const idx = parseInt(cb.dataset.idx);
+      cb.checked ? selectedRows.add(idx) : selectedRows.delete(idx);
       updateBulkBar();
-    }
-  };
+    });
+  });
+
+  // Per-row copy button
+  tableBody.querySelectorAll('.btn-copy-row').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const r = filteredData[parseInt(btn.dataset.idx)];
+      navigator.clipboard.writeText(r.tracking_no || '');
+      btn.textContent = '✓';
+      setTimeout(() => btn.textContent = '⎘', 1200);
+    });
+  });
 }
 
+// Select all
+selectAll.addEventListener('change', () => {
+  tableBody.querySelectorAll('.row-check').forEach((cb, i) => {
+    cb.checked = selectAll.checked;
+    selectAll.checked ? selectedRows.add(i) : selectedRows.delete(i);
+  });
+  updateBulkBar();
+});
+
+// Bulk actions
 function updateBulkBar() {
-  const bar   = document.getElementById('bulk-bar');
-  const count = document.getElementById('bulk-count');
-  if (selectedRows.size > 0) {
-    bar.classList.remove('hidden');
-    count.textContent = `${selectedRows.size} paquete${selectedRows.size > 1 ? 's' : ''} seleccionado${selectedRows.size > 1 ? 's' : ''}`;
-  } else {
-    bar.classList.add('hidden');
-  }
+  const n = selectedRows.size;
+  bulkBar.classList.toggle('hidden', n === 0);
+  bulkCount.textContent = `${n} seleccionado${n !== 1 ? 's' : ''}`;
 }
 
-/* ─── HELPERS ────────────────────────────────────────── */
-function statusPill(status) {
-  if (!status) return '<span class="pill pill-other">—</span>';
-  const s = status.toLowerCase();
-  let cls = s.includes('picked') ? 'pill-picked'
-          : s.includes('assigned') ? 'pill-assigned'
-          : s.includes('sorting') ? 'pill-sorting'
-          : 'pill-other';
-  return `<span class="pill ${cls}">${escHtml(status)}</span>`;
+$('bulk-copy-btn').addEventListener('click', () => {
+  const rows = [...selectedRows].map(i => {
+    const r = filteredData[i];
+    return [
+      r.tracking_no, r.status, r.courier_name,
+      r.receiver_city, r.zip_code, r.phone,
+      new Date(r.actual_inbound_time || 0).toLocaleDateString('es-MX')
+    ].join('\t');
+  });
+  navigator.clipboard.writeText(rows.join('\n'));
+});
+
+$('bulk-clear-btn').addEventListener('click', () => {
+  selectedRows.clear();
+  tableBody.querySelectorAll('.row-check').forEach(cb => cb.checked = false);
+  selectAll.checked = false;
+  updateBulkBar();
+});
+
+// Refresh button
+$('refresh-btn').addEventListener('click', loadData);
+
+// ── Utils ─────────────────────────────────────────────────────────────────
+function esc(str) {
+  if (str === null || str === undefined) return '—';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
-function shortStr(str, max) {
-  if (!str) return '—';
-  return str.length > max ? str.substring(0, max - 1) + '…' : str;
-}
-
-function formatDate(raw) {
-  if (!raw) return '—';
-  try {
-    return new Date(raw).toLocaleString('es-MX', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
-  } catch { return raw; }
-}
-
-function escHtml(str) {
-  if (!str) return '—';
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
+// ── Boot ──────────────────────────────────────────────────────────────────
+loadData();
