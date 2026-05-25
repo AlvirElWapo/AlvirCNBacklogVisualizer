@@ -4,8 +4,9 @@
  * FILL IN YOUR SUPABASE CREDENTIALS BELOW BEFORE DEPLOYING
  */
 
-const SUPABASE_URL  = 'https://YOUR_PROJECT.supabase.co';
-const SUPABASE_ANON = 'YOUR_ANON_KEY';
+const SUPABASE_URL  = 'https://jtusharwuoswmgdmjcvx.supabase.co';
+const SUPABASE_ANON = 'sb_publishable_n3QnMAwVC3KSkLQUAEYqwA_7kdtNtzp';
+
 
 // ─────────────────────────────────────────────────────────────
 
